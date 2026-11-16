@@ -1,6 +1,5 @@
 name: Build APK Flutter
 run-name: Build APK - ${{ inputs.jobId }}
-run-name: Build APK - ${{ inputs.jobId }}
 
 on:
   workflow_dispatch:
