@@ -41,34 +41,21 @@ jobs:
         run: |
           set -euo pipefail
           echo '${{ github.event.inputs.payload }}' > payload.json
-          cat payload.json
-
           MODE=$(jq -r '.mode // empty' payload.json)
           if [ -z "$MODE" ]; then
             if jq -e '.appName' payload.json >/dev/null 2>&1; then MODE="url"; else MODE="zip"; fi
           fi
           echo "MODE=$MODE" >> "$GITHUB_ENV"
-
           if [ "$MODE" = "url" ]; then
             WEB_URL=$(jq -r '.url // empty' payload.json)
             APP_NAME=$(jq -r '.appName // "WebApp"' payload.json)
             ICON_URL=$(jq -r '.iconUrl // empty' payload.json)
-            if [ -z "$WEB_URL" ]; then
-              echo "::error::mode=url tapi gak ada 'url' website di payload"
-              exit 1
-            fi
             echo "WEB_URL=$WEB_URL" >> "$GITHUB_ENV"
             echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"
             echo "ICON_URL=$ICON_URL" >> "$GITHUB_ENV"
-            echo "✅ Mode: Web2APK -> $WEB_URL ($APP_NAME)"
           else
             ZIP_URL=$(jq -r '.zipAssetUrl // .url // empty' payload.json)
-            if [ -z "$ZIP_URL" ]; then
-              echo "::error::Tidak ada zipAssetUrl / url di payload"
-              exit 1
-            fi
             echo "ZIP_URL=$ZIP_URL" >> "$GITHUB_ENV"
-            echo "✅ Mode: ZIP project -> $ZIP_URL"
           fi
 
       - name: Download & extract ZIP
@@ -79,17 +66,11 @@ jobs:
           set -euo pipefail
           rm -rf project_raw project.zip
           mkdir -p project_raw
-
           if [[ "$ZIP_URL" == *"api.github.com"* ]]; then
-            curl -fL --retry 3 --retry-delay 5 \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/octet-stream" \
-              -o project.zip "$ZIP_URL"
+            curl -fL --retry 3 --retry-delay 5 -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/octet-stream" -o project.zip "$ZIP_URL"
           else
             curl -fL --retry 3 --retry-delay 5 -o project.zip "$ZIP_URL"
           fi
-
-          ls -lh project.zip
           unzip -q project.zip -d project_raw
 
       - name: Setup Java 17
@@ -109,7 +90,6 @@ jobs:
         id: detect
         run: |
           set -euo pipefail
-
           if [ "$MODE" = "url" ]; then
             SAFE_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_]+/_/g' | sed -E 's/^[0-9]+/a&/')
             [ -z "$SAFE_NAME" ] && SAFE_NAME="webapp"
@@ -117,12 +97,10 @@ jobs:
             DART_APP_NAME=$(python3 -c "import os,sys; s=os.environ['APP_NAME']; s=s.replace(chr(92),chr(92)*2).replace(chr(39),chr(92)+chr(39)); sys.stdout.write(s)")
             XML_APP_NAME=$(python3 -c "import os,sys; s=os.environ['APP_NAME']; sys.stdout.write(''.join(c for c in s if c not in '&<>'+chr(34)))")
             WEB_URL_SAFE=$(python3 -c "import os,sys; sys.stdout.write(os.environ['WEB_URL'].replace(chr(39),'%27'))")
-
             mkdir -p project_raw
             cd project_raw
             flutter create --org com.ziperr --project-name "$SAFE_NAME" --platforms=android --no-pub "$SAFE_NAME" >/dev/null
             cd "$SAFE_NAME"
-
             flutter pub add webview_flutter
             if [ -n "$ICON_URL" ]; then
               mkdir -p assets
@@ -132,14 +110,11 @@ jobs:
                 dart run flutter_launcher_icons || true
               fi
             fi
-
             export DART_APP_NAME WEB_URL_SAFE
             echo 'aW1wb3J0ICdwYWNrYWdlOmZsdXR0ZXIvbWF0ZXJpYWwuZGFydCc7CmltcG9ydCAncGFja2FnZTp3ZWJ2aWV3X2ZsdXR0ZXIvd2Vidmlld19mbHV0dGVyLmRhcnQnOwoKdm9pZCBtYWluKCkgPT4gcnVuQXBwKGNvbnN0IFdlYkFwcCgpKTsKCmNsYXNzIFdlYkFwcCBleHRlbmRzIFN0YXRlbGVzc1dpZGdldCB7CiAgY29uc3QgV2ViQXBwKHtzdXBlci5rZXl9KTsKICBAb3ZlcnJpZGUKICBXaWRnZXQgYnVpbGQoQnVpbGRDb250ZXh0IGNvbnRleHQpIHsKICAgIHJldHVybiBNYXRlcmlhbEFwcCgKICAgICAgdGl0bGU6ICdfX0RBUlRfQVBQX05BTUVfXycsCiAgICAgIGRlYnVnU2hvd0NoZWNrZWRNb2RlQmFubmVyOiBmYWxzZSwKICAgICAgdGhlbWU6IFRoZW1lRGF0YSh1c2VNYXRlcmlhbDM6IHRydWUpLAogICAgICBob21lOiBjb25zdCBXZWJWaWV3UGFnZSgpLAogICAgKTsKICB9Cn0KCmNsYXNzIFdlYlZpZXdQYWdlIGV4dGVuZHMgU3RhdGVmdWxXaWRnZXQgewogIGNvbnN0IFdlYlZpZXdQYWdlKHtzdXBlci5rZXl9KTsKICBAb3ZlcnJpZGUKICBTdGF0ZTxXZWJWaWV3UGFnZT4gY3JlYXRlU3RhdGUoKSA9PiBfV2ViVmlld1BhZ2VTdGF0ZSgpOwp9CgpjbGFzcyBfV2ViVmlld1BhZ2VTdGF0ZSBleHRlbmRzIFN0YXRlPFdlYlZpZXdQYWdlPiB7CiAgbGF0ZSBmaW5hbCBXZWJWaWV3Q29udHJvbGxlciBjb250cm9sbGVyOwoKICBAb3ZlcnJpZGUKICB2b2lkIGluaXRTdGF0ZSgpIHsKICAgIHN1cGVyLmluaXRTdGF0ZSgpOwogICAgY29udHJvbGxlciA9IFdlYlZpZXdDb250cm9sbGVyKCkKICAgICAgLi5zZXRKYXZhU2NyaXB0TW9kZShKYXZhU2NyaXB0TW9kZS51bnJlc3RyaWN0ZWQpCiAgICAgIC4ubG9hZFJlcXVlc3QoVXJpLnBhcnNlKCdfX1dFQl9VUkxfU0FGRV9fJykpOwogIH0KCiAgQG92ZXJyaWRlCiAgV2lkZ2V0IGJ1aWxkKEJ1aWxkQ29udGV4dCBjb250ZXh0KSB7CiAgICByZXR1cm4gU2NhZmZvbGQoCiAgICAgIGJvZHk6IFNhZmVBcmVhKGNoaWxkOiBXZWJWaWV3V2lkZ2V0KGNvbnRyb2xsZXI6IGNvbnRyb2xsZXIpKSwKICAgICk7CiAgfQp9Cg==' | base64 -d > lib/main.dart
             python3 -c "import os; p='lib/main.dart'; c=open(p).read(); c=c.replace('__DART_APP_NAME__', os.environ['DART_APP_NAME']).replace('__WEB_URL_SAFE__', os.environ['WEB_URL_SAFE']); open(p,'w').write(c)"
-
             sed -i "s/android:label=\"[^\"]*\"/android:label=\"${XML_APP_NAME}\"/" android/app/src/main/AndroidManifest.xml
             python3 -c "p='android/app/src/main/AndroidManifest.xml'; c=open(p).read(); c=c if 'android.permission.INTERNET' in c else c.replace('<application', '<uses-permission android:name=\"android.permission.INTERNET\"/>\n    <application', 1); c=c if 'usesCleartextTraffic' in c else c.replace('<application', '<application android:usesCleartextTraffic=\"true\"', 1); open(p,'w').write(c)"
-
             echo "type=flutter" >> "$GITHUB_OUTPUT"
             echo "dir=project_raw/$SAFE_NAME" >> "$GITHUB_OUTPUT"
           else
