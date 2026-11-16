@@ -1,4 +1,4 @@
-name: Build APK (Flutter / Gradle / Web2APK Auto)
+name: Build APK - ${{ github.event.inputs.jobId }}
 
 on:
   workflow_dispatch:
