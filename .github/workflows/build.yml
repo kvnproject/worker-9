@@ -5,61 +5,30 @@ on:
   workflow_dispatch:
     inputs:
       jobId:
-        description: 'Job ID from Bot'
         required: true
       userId:
-        description: 'User ID'
         required: true
       payload:
-        description: 'Build Payload (JSON)'
         required: true
       build_type:
-        description: 'release / debug'
         required: false
         default: 'release'
-
-concurrency:
-  group: build-${{ github.event.inputs.jobId }}
-  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    env:
-      GRADLE_OPTS: >-
-        -Dorg.gradle.daemon=false
-        -Dorg.gradle.parallel=true
-        -Dorg.gradle.caching=true
-        -Dorg.gradle.configureondemand=true
-        -Dorg.gradle.workers.max=4
-        -Dorg.gradle.jvmargs=-Xmx3g
-      TARGET_PLATFORMS: android-arm,android-arm64
-      GRADLE_ABIS: armeabi-v7a,arm64-v8a
 
     steps:
       - name: Parse payload
         run: |
-          set -euo pipefail
           echo '${{ github.event.inputs.payload }}' > payload.json
-          MODE=$(jq -r '.mode // empty' payload.json)
-          if [ -z "$MODE" ]; then
-            if jq -e '.appName' payload.json >/dev/null 2>&1; then MODE="url"; else MODE="zip"; fi
-          fi
+          MODE=$(jq -r '.mode // "zip"' payload.json)
           echo "MODE=$MODE" >> "$GITHUB_ENV"
-          if [ "$MODE" = "url" ]; then
-            WEB_URL=$(jq -r '.url // empty' payload.json)
-            APP_NAME=$(jq -r '.appName // "WebApp"' payload.json)
-            ICON_URL=$(jq -r '.iconUrl // empty' payload.json)
-            echo "WEB_URL=$WEB_URL" >> "$GITHUB_ENV"
-            echo "APP_NAME=$APP_NAME" >> "$GITHUB_ENV"
-            echo "ICON_URL=$ICON_URL" >> "$GITHUB_ENV"
-          else
-            RELEASE_TAG=$(jq -r '.releaseTag // empty' payload.json)
-            FILE_NAME=$(jq -r '.fileName // empty' payload.json)
-            echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
-            echo "FILE_NAME=$FILE_NAME" >> "$GITHUB_ENV"
-          fi
+          RELEASE_TAG=$(jq -r '.releaseTag // empty' payload.json)
+          FILE_NAME=$(jq -r '.fileName // empty' payload.json)
+          echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+          echo "FILE_NAME=$FILE_NAME" >> "$GITHUB_ENV"
 
       - name: Download & extract ZIP
         if: env.MODE == 'zip'
@@ -85,88 +54,43 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Detect / Generate project
+      - name: Detect Project
         id: detect
         run: |
-          set -euo pipefail
-          if [ "$MODE" = "url" ]; then
-            SAFE_NAME=$(echo "$APP_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_]+/_/g' | sed -E 's/^[0-9]+/a&/')
-            [ -z "$SAFE_NAME" ] && SAFE_NAME="webapp"
-            export APP_NAME WEB_URL
-            DART_APP_NAME=$(python3 -c "import os,sys; s=os.environ['APP_NAME']; s=s.replace(chr(92),chr(92)*2).replace(chr(39),chr(92)+chr(39)); sys.stdout.write(s)")
-            XML_APP_NAME=$(python3 -c "import os,sys; s=os.environ['APP_NAME']; sys.stdout.write(''.join(c for c in s if c not in '&<>'+chr(34)))")
-            WEB_URL_SAFE=$(python3 -c "import os,sys; sys.stdout.write(os.environ['WEB_URL'].replace(chr(39),'%27'))")
-            mkdir -p project_raw
-            cd project_raw
-            flutter create --org com.ziperr --project-name "$SAFE_NAME" --platforms=android --no-pub "$SAFE_NAME" >/dev/null
-            cd "$SAFE_NAME"
-            flutter pub add webview_flutter
-            if [ -n "$ICON_URL" ]; then
-              mkdir -p assets
-              if curl -fsSL --max-time 20 "$ICON_URL" -o assets/icon.png && [ -s assets/icon.png ]; then
-                flutter pub add dev:flutter_launcher_icons
-                printf 'flutter_launcher_icons:\n  android: true\n  ios: false\n  image_path: "assets/icon.png"\n' > flutter_launcher_icons.yaml
-                dart run flutter_launcher_icons || true
-              fi
-            fi
-            export DART_APP_NAME WEB_URL_SAFE
-            echo 'aW1wb3J0ICdwYWNrYWdlOmZsdXR0ZXIvbWF0ZXJpYWwuZGFydCc7CmltcG9ydCAncGFja2FnZTp3ZWJ2aWV3X2ZsdXR0ZXIvd2Vidmlld19mbHV0dGVyLmRhcnQnOwoKdm9pZCBtYWluKCkgPT4gcnVuQXBwKGNvbnN0IFdlYkFwcCgpKTsKCmNsYXNzIFdlYkFwcCBleHRlbmRzIFN0YXRlbGVzc1dpZGdldCB7CiAgY29uc3QgV2ViQXBwKHtzdXBlci5rZXl9KTsKICBAb3ZlcnJpZGUKICBXaWRnZXQgYnVpbGQoQnVpbGRDb250ZXh0IGNvbnRleHQpIHsKICAgIHJldHVybiBNYXRlcmlhbEFwcCgKICAgICAgdGl0bGU6ICdfX0RBUlRfQVBQX05BTUVfXycsCiAgICAgIGRlYnVnU2hvd0NoZWNrZWRNb2RlQmFubmVyOiBmYWxzZSwKICAgICAgdGhlbWU6IFRoZW1lRGF0YSh1c2VNYXRlcmlhbDM6IHRydWUpLAogICAgICBob21lOiBjb25zdCBXZWJWaWV3UGFnZSgpLAogICAgKTsKICB9Cn0KCmNsYXNzIFdlYlZpZXdQYWdlIGV4dGVuZHMgU3RhdGVmdWxXaWRnZXQgewogIGNvbnN0IFdlYlZpZXdQYWdlKHtzdXBlci5rZXl9KTsKICBAb3ZlcnJpZGUKICBTdGF0ZTxXZWJWaWV3UGFnZT4gY3JlYXRlU3RhdGUoKSA9PiBfV2ViVmlld1BhZ2VTdGF0ZSgpOwp9CgpjbGFzcyBfV2ViVmlld1BhZ2VTdGF0ZSBleHRlbmRzIFN0YXRlPFdlYlZpZXdQYWdlPiB7CiAgbGF0ZSBmaW5hbCBXZWJWaWV3Q29udHJvbGxlciBjb250cm9sbGVyOwoKICBAb3ZlcnJpZGUKICB2b2lkIGluaXRTdGF0ZSgpIHsKICAgIHN1cGVyLmluaXRTdGF0ZSgpOwogICAgY29udHJvbGxlciA9IFdlYlZpZXdDb250cm9sbGVyKCkKICAgICAgLi5zZXRKYXZhU2NyaXB0TW9kZShKYXZhU2NyaXB0TW9kZS51bnJlc3RyaWN0ZWQpCiAgICAgIC4ubG9hZFJlcXVlc3QoVXJpLnBhcnNlKCdfX1dFQl9VUkxfU0FGRV9fJykpOwogIH0KCiAgQG92ZXJyaWRlCiAgV2lkZ2V0IGJ1aWxkKEJ1aWxkQ29udGV4dCBjb250ZXh0KSB7CiAgICByZXR1cm4gU2NhZmZvbGQoCiAgICAgIGJvZHk6IFNhZmVBcmVhKGNoaWxkOiBXZWJWaWV3V2lkZ2V0KGNvbnRyb2xsZXI6IGNvbnRyb2xsZXIpKSwKICAgICk7CiAgfQp9Cg==' | base64 -d > lib/main.dart
-            python3 -c "import os; p='lib/main.dart'; c=open(p).read(); c=c.replace('__DART_APP_NAME__', os.environ['DART_APP_NAME']).replace('__WEB_URL_SAFE__', os.environ['WEB_URL_SAFE']); open(p,'w').write(c)"
-            sed -i "s/android:label=\"[^\"]*\"/android:label=\"${XML_APP_NAME}\"/" android/app/src/main/AndroidManifest.xml
-            python3 -c "p='android/app/src/main/AndroidManifest.xml'; c=open(p).read(); c=c if 'android.permission.INTERNET' in c else c.replace('<application', '<uses-permission android:name=\"android.permission.INTERNET\"/>\n    <application', 1); c=c if 'usesCleartextTraffic' in c else c.replace('<application', '<application android:usesCleartextTraffic=\"true\"', 1); open(p,'w').write(c)"
-            echo "type=flutter" >> "$GITHUB_OUTPUT"
-            echo "dir=project_raw/$SAFE_NAME" >> "$GITHUB_OUTPUT"
+          PUBSPEC=$(find project_raw -type f -name pubspec.yaml -not -path "*/build/*" | head -n 1)
+          if [ -n "$PUBSPEC" ]; then
+            DIR=$(dirname "$PUBSPEC")
+            echo "dir=$DIR" >> "$GITHUB_OUTPUT"
           else
-            PUBSPEC=$(find project_raw -type f -name pubspec.yaml -not -path "*/build/*" -not -path "*/.dart_tool/*" | head -n 1)
-            if [ -n "$PUBSPEC" ]; then
-              DIR=$(dirname "$PUBSPEC")
-              echo "type=flutter" >> "$GITHUB_OUTPUT"
-              echo "dir=$DIR" >> "$GITHUB_OUTPUT"
-            else
-              echo "::error::Project tidak dikenali."
-              exit 1
-            fi
+            echo "::error::Project tidak dikenali."
+            exit 1
           fi
 
-      - name: Build Flutter APK
-        if: steps.detect.outputs.type == 'flutter'
+      - name: FIX KOTLIN VERSION
         working-directory: ${{ steps.detect.outputs.dir }}
         run: |
           set -euo pipefail
-          flutter config --no-analytics >/dev/null 2>&1 || true
-          [ "$MODE" != "url" ] && flutter pub get
-          BT="${{ github.event.inputs.build_type }}"
-          [ -z "$BT" ] && BT=release
-          flutter build apk --$BT --target-platform=$TARGET_PLATFORMS --no-tree-shake-icons --no-shrink --no-pub 2>&1 | tee build.log
+          if [ -f android/settings.gradle ]; then
+            sed -i 's/org.jetbrains.kotlin.android" version ".*"/org.jetbrains.kotlin.android" version "1.9.0"/' android/settings.gradle
+          fi
+          if [ -f android/settings.gradle.kts ]; then
+            sed -i 's/org.jetbrains.kotlin.android" version ".*"/org.jetbrains.kotlin.android" version "1.9.0"/' android/settings.gradle.kts
+          fi
+          if [ -f android/gradle/wrapper/gradle-wrapper.properties ]; then
+            sed -i 's/distributionUrl=.*/distributionUrl=https\\:\\/\\/services.gradle.org\\/distributions\\/gradle-8.6-bin.zip/' android/gradle/wrapper/gradle-wrapper.properties
+          fi
+          echo "✅ Kotlin & Gradle berhasil di-upgrade!"
 
-      - name: Locate APK
-        id: locate
+      - name: Build Flutter APK
+        working-directory: ${{ steps.detect.outputs.dir }}
         run: |
-          set -euo pipefail
-          APK=$(find project_raw -type f -name "*.apk" -not -path "*/intermediates/*" -not -path "*/tmp/*" -not -path "*/kotlin/*" -not -path "*/.gradle/*" 2>/dev/null | head -n 1 || true)
-          if [ -z "$APK" ]; then
-            APK=$(find project_raw -type f -name "*.apk" -not -path "*/.gradle/*" 2>/dev/null | head -n 1 || true)
-          fi
-          if [ -z "$APK" ]; then
-            echo "::error::APK tidak ditemukan."
-            exit 1
-          fi
-          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+          flutter config --no-analytics
+          flutter pub get
+          flutter build apk --release --target-platform=android-arm,android-arm64 --no-tree-shake-icons
 
-      - name: Upload artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: apk-${{ github.event.inputs.jobId }}
-          path: ${{ env.APK_PATH }}
-          retention-days: 1
-
-      - name: Upload build log
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log-${{ github.event.inputs.jobId }}
-          path: |
-            ${{ steps.detect.outputs.dir }}/build.log
-            ${{ steps.detect.outputs.dir }}/android/build.log
-          if-no-files-found: ignore
+          path: "**/build/app/outputs/flutter-apk/app-release.apk"
           retention-days: 1
